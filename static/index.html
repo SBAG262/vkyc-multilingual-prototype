@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>VKYC Multilingual Prototype</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px;
+           margin: 28px auto; padding: 0 16px; color: #1a1a1a; }
+    h1 { font-size: 1.3rem; margin-bottom: 2px; }
+    .sub { color: #666; margin-top: 0; font-size: 0.9rem; }
+    #backend { font-size: 0.75rem; margin-bottom: 18px; }
+    .ok { color: #137333; } .bad { color: #c5221f; }
+    .panel { border: 1px solid #e0e0e0; border-radius: 10px;
+             padding: 16px; margin-bottom: 18px; }
+    .panel h2 { font-size: 0.95rem; margin: 0 0 4px 0; }
+    .hint { font-size: 0.78rem; color: #777; margin: 0 0 12px 0; }
+    label { display: block; font-size: 0.78rem; color: #555; margin-bottom: 4px; }
+    select, textarea { width: 100%; padding: 8px; border: 1px solid #ccc;
+                       border-radius: 6px; font-size: 1rem; box-sizing: border-box; }
+    textarea { min-height: 60px; }
+    button { background: #d84315; color: #fff; border: none; padding: 10px 18px;
+             border-radius: 6px; font-size: 0.95rem; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.rec { background: #b71c1c; }
+    .out { margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+           background: #f4f6f8; min-height: 22px; font-size: 1.05rem; }
+    .meta { font-size: 0.72rem; color: #777; margin-top: 6px; }
+    .err { background: #fce8e6; color: #c5221f; }
+    #log { font-size: 0.8rem; color: #444; }
+    #log div { padding: 5px 0; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h1>VKYC Multilingual Prototype</h1>
+  <p class="sub">Real-time interpretation layer &mdash; the officer stays in control</p>
+  <div id="backend">Checking backend...</div>
+
+  <div class="panel">
+    <label>Customer's language</label>
+    <select id="custLang">
+      <option value="ta-IN">Tamil</option>
+      <option value="te-IN">Telugu</option>
+      <option value="bn-IN">Bengali</option>
+      <option value="kn-IN">Kannada</option>
+      <option value="ml-IN">Malayalam</option>
+      <option value="mr-IN">Marathi</option>
+      <option value="gu-IN">Gujarati</option>
+      <option value="pa-IN">Punjabi</option>
+      <option value="od-IN">Odia</option>
+      <option value="hi-IN">Hindi</option>
+    </select>
+  </div>
+
+  <!-- CUSTOMER LEG -->
+  <div class="panel">
+    <h2>1. Customer speaks (any Indian language)</h2>
+    <p class="hint">Hold the button, speak, then release. The officer sees English.</p>
+    <button id="custBtn">Hold to record &mdash; customer</button>
+    <div id="heard" class="out">What the customer said will appear here, in English.</div>
+    <div id="heardMeta" class="meta"></div>
+  </div>
+
+  <!-- OFFICER LEG -->
+  <div class="panel">
+    <h2>2. Officer replies (English)</h2>
+    <p class="hint">Speak or type. Check the words before sending &mdash; then the customer hears them in their language.</p>
+    <button id="offBtn">Hold to record &mdash; officer</button>
+    <div style="margin-top:12px;">
+      <label>Your reply (editable &mdash; correct any mis-heard word)</label>
+      <textarea id="reply">Please show your PAN card to the camera.</textarea>
+    </div>
+    <div style="margin-top:10px;">
+      <button id="sendBtn" onclick="sendReply()">Translate &amp; speak</button>
+    </div>
+    <div id="said" class="out">The translated reply will appear here.</div>
+    <audio id="player" style="margin-top:10px; width:100%;" controls hidden></audio>
+  </div>
+
+    <!-- AGENT ASSIST (RAG) -->
+  <div class="panel">
+    <h2>3. Ask the policy assistant</h2>
+    <p class="hint">Grounded in the KYC knowledge base &mdash; it answers only from policy, or says it isn't covered.</p>
+    <textarea id="question" style="min-height:48px;">Is a PAN card accepted as address proof?</textarea>
+    <div style="margin-top:10px;">
+      <button id="askBtn" onclick="askPolicy()">Ask</button>
+    </div>
+    <div id="answer" class="out">The grounded answer will appear here.</div>
+    <div id="sources" class="meta"></div>
+  </div>
+  
+  <!-- AUDIT LOG -->
+  <div class="panel">
+    <h2>4. Session transcript</h2>
+    <p class="hint">Every turn is logged &mdash; stands in for the audit trail.</p>
+    <div id="log"><em style="color:#999;">Nothing yet.</em></div>
+  </div>
+
+<script>
+let logStarted = false;
+
+async function checkBackend() {
+  const el = document.getElementById("backend");
+  try {
+    const d = await (await fetch("/health")).json();
+    el.innerHTML = d.key_loaded
+      ? '<span class="ok">Backend connected &#10003; &nbsp; API key loaded &#10003;</span>'
+      : '<span class="bad">Backend up, but API key NOT loaded</span>';
+  } catch (e) {
+    el.innerHTML = '<span class="bad">Backend not reachable</span>';
+  }
+}
+
+function addLog(who, text) {
+  const log = document.getElementById("log");
+  if (!logStarted) { log.innerHTML = ""; logStarted = true; }
+  const row = document.createElement("div");
+  const t = new Date().toLocaleTimeString();
+  row.innerHTML = "<strong>" + who + "</strong> &nbsp;<span style='color:#999'>"
+                + t + "</span><br>" + text;
+  log.appendChild(row);
+}
+
+// Generic press-to-talk recorder, reused by both sides.
+function makeRecorder(button, label, onReady) {
+  let recorder, chunks = [];
+
+  async function start() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recorder = new MediaRecorder(stream);
+      chunks = [];
+      recorder.ondataavailable = e => chunks.push(e.data);
+      recorder.onstop = () => onReady(new Blob(chunks, { type: "audio/webm" }));
+      recorder.start();
+      button.textContent = "Recording... release to stop";
+      button.className = "rec";
+    } catch (e) {
+      alert("Microphone blocked: " + e.message);
+    }
+  }
+
+  function stop() {
+    if (recorder && recorder.state === "recording") recorder.stop();
+    button.textContent = label;
+    button.className = "";
+  }
+
+  button.addEventListener("mousedown", start);
+  button.addEventListener("mouseup", stop);
+  button.addEventListener("mouseleave", stop);
+}
+
+// ---------- CUSTOMER LEG ----------
+makeRecorder(
+  document.getElementById("custBtn"),
+  "Hold to record \u2014 customer",
+  async (blob) => {
+    const out = document.getElementById("heard");
+    const meta = document.getElementById("heardMeta");
+    out.className = "out"; out.textContent = "Listening..."; meta.textContent = "";
+
+    const fd = new FormData();
+    fd.append("audio", blob, "clip.webm");
+    try {
+      const d = await (await fetch("/listen", { method: "POST", body: fd })).json();
+      if (d.ok) {
+        out.textContent = d.english_text || "(nothing detected)";
+        meta.textContent = "detected language: " + d.detected_source;
+        addLog("Customer", d.english_text);
+      } else {
+        out.className = "out err"; out.textContent = d.error;
+      }
+    } catch (e) {
+      out.className = "out err"; out.textContent = "Failed: " + e.message;
+    }
+  }
+);
+
+// ---------- OFFICER LEG: speech into the reply box ----------
+makeRecorder(
+  document.getElementById("offBtn"),
+  "Hold to record \u2014 officer",
+  async (blob) => {
+    const box = document.getElementById("reply");
+    const prev = box.value;
+    box.value = "Transcribing...";
+
+    const fd = new FormData();
+    fd.append("audio", blob, "clip.webm");
+    try {
+      const d = await (await fetch("/listen-officer", { method: "POST", body: fd })).json();
+      box.value = d.ok ? (d.text || prev) : prev;
+      if (!d.ok) alert("Could not transcribe: " + d.error);
+    } catch (e) {
+      box.value = prev;
+      alert("Failed: " + e.message);
+    }
+  }
+);
+
+// ---------- Translate the officer's words and speak them ----------
+async function sendReply() {
+  const btn = document.getElementById("sendBtn");
+  const out = document.getElementById("said");
+  const player = document.getElementById("player");
+  const text = document.getElementById("reply").value;
+  const lang = document.getElementById("custLang").value;
+
+  btn.disabled = true; out.className = "out"; out.textContent = "Translating...";
+  player.hidden = true;
+
+  try {
+    const t = await (await fetch("/translate", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text, source_lang: "en-IN", target_lang: lang })
+    })).json();
+
+    if (!t.ok) { out.className = "out err"; out.textContent = t.error; return; }
+    out.textContent = t.translated_text;
+    addLog("Officer", text + "<br><em>" + t.translated_text + "</em>");
+
+    const s = await (await fetch("/speak", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: t.translated_text, target_lang: lang })
+    })).json();
+
+    if (s.ok) {
+      player.src = "data:audio/wav;base64," + s.audio;
+      player.hidden = false;
+      player.play();
+    }
+  } catch (e) {
+    out.className = "out err"; out.textContent = "Failed: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function askPolicy() {
+  const btn = document.getElementById("askBtn");
+  const out = document.getElementById("answer");
+  const src = document.getElementById("sources");
+  const q = document.getElementById("question").value;
+
+  btn.disabled = true;
+  out.className = "out";
+  out.textContent = "Checking the policy...";
+  src.textContent = "";
+
+  try {
+    const d = await (await fetch("/ask", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q })
+    })).json();
+
+    if (d.ok) {
+      out.textContent = d.answer;
+      src.textContent = d.sources.length
+        ? "retrieved from: " + d.sources.join("  |  ")
+        : "no matching policy section found";
+      addLog("Policy assistant", "<em>" + q + "</em><br>" + d.answer);
+    } else {
+      out.className = "out err";
+      out.textContent = d.error;
+    }
+  } catch (e) {
+    out.className = "out err";
+    out.textContent = "Failed: " + e.message;
+  }
+  btn.disabled = false;
+}
+
+checkBackend();
+</script>
+</body>
+</html>
