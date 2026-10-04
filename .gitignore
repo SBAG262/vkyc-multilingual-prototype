@@ -1,0 +1,30 @@
+# Never commit secrets
+.env
+.env.*
+!.env.example
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Temporary audio files
+*.wav
+*.webm
+*.mp3
