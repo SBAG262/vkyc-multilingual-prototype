@@ -1,7 +1,7 @@
 # VKYC Officer Knowledge Base (ILLUSTRATIVE SAMPLE)
 
 NOTE: This is sample content for prototype purposes, based on publicly
-available RBI V-CIP norms. Replace with IDFC FIRST Bank's actual internal
+available RBI V-CIP norms. Replace with Bank's actual internal
 KYC policy documents before any real use.
 
 ## Officially Valid Documents (OVDs)
